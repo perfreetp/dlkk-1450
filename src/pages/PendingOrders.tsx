@@ -10,14 +10,19 @@ import {
   Flag,
   Clock,
   ChevronRight,
+  X,
+  PenLine,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import PatientCard from '@/components/PatientCard';
 import StatusBadge from '@/components/StatusBadge';
+import SignaturePad from '@/components/SignaturePad';
 import { groupAndSortOrders } from '@/utils/order';
 import { formatTime, isOverdue, isUpcoming } from '@/utils/time';
 import { cn } from '@/lib/utils';
-import type { Order, OrderType, Patient } from '@/types';
+import type { Order, OrderType, Patient, ExceptionRecord } from '@/types';
 
 type TimeTab = 'all' | 'overdue' | 'upcoming' | 'today';
 type TypeFilter = 'all' | OrderType;
@@ -155,6 +160,8 @@ function OrderCard({
 export default function PendingOrders() {
   const navigate = useNavigate();
   const patients = useAppStore((state) => state.patients);
+  const orders = useAppStore((state) => state.orders);
+  const currentUser = useAppStore((state) => state.currentUser);
   const selectedPatientId = useAppStore((state) => state.selectedPatientId);
   const selectPatient = useAppStore((state) => state.selectPatient);
   const getPendingOrders = useAppStore((state) => state.getPendingOrders);
@@ -166,6 +173,19 @@ export default function PendingOrders() {
   const [timeTab, setTimeTab] = useState<TimeTab>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [searchText, setSearchText] = useState('');
+
+  const [showBatchExecuteModal, setShowBatchExecuteModal] = useState(false);
+  const [showBatchExceptionModal, setShowBatchExceptionModal] = useState(false);
+  const [showBatchSignature, setShowBatchSignature] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [batchExceptionType, setBatchExceptionType] = useState<ExceptionRecord['type']>('暂停');
+  const [batchExceptionReason, setBatchExceptionReason] = useState('');
+  const [batchExceptionDesc, setBatchExceptionDesc] = useState('');
+
+  const executeOrdersBatch = useAppStore((state) => state.executeOrdersBatch);
+  const reportException = useAppStore((state) => state.reportException);
+
+  const presetReasons = ['药品破损', '患者拒绝', '医嘱疑问', '过敏风险', '其他'];
 
   const patientMap = useMemo(() => {
     const map = new Map<string, Patient>();
@@ -243,15 +263,66 @@ export default function PendingOrders() {
   };
 
   const handleException = (orderId: string) => {
-    console.log('异常处理', orderId);
+    navigate(`/exceptions?orderId=${orderId}`);
   };
 
   const handleBatchExecute = () => {
-    console.log('批量执行', selectedOrderIds);
+    if (selectedOrderIds.length === 0) return;
+    setShowBatchExecuteModal(true);
   };
 
   const handleBatchMark = () => {
-    console.log('批量标记', selectedOrderIds);
+    if (selectedOrderIds.length === 0) return;
+    setBatchExceptionType('暂停');
+    setBatchExceptionReason('');
+    setBatchExceptionDesc('');
+    setShowBatchExceptionModal(true);
+  };
+
+  const handleConfirmBatchExecute = (signatureData: string) => {
+    if (!currentUser || selectedOrderIds.length === 0) return;
+
+    executeOrdersBatch(selectedOrderIds, currentUser.id, signatureData, true, false);
+
+    setShowBatchSignature(false);
+    setShowBatchExecuteModal(false);
+    clearOrderSelect();
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2000);
+  };
+
+  const handleConfirmBatchException = (signatureData: string) => {
+    if (!currentUser || selectedOrderIds.length === 0) return;
+
+    const finalReason = batchExceptionReason === '其他' ? batchExceptionDesc : batchExceptionReason;
+
+    selectedOrderIds.forEach((orderId) => {
+      const order = orders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      reportException({
+        orderId,
+        patientId: order.patientId,
+        type: batchExceptionType,
+        reason: finalReason,
+        customReason: batchExceptionReason === '其他' ? batchExceptionDesc : undefined,
+        description: batchExceptionDesc,
+        reporterId: currentUser.id,
+        reporterName: currentUser.name,
+      });
+    });
+
+    setShowBatchSignature(false);
+    setShowBatchExceptionModal(false);
+    clearOrderSelect();
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2000);
+  };
+
+  const resetBatchForm = () => {
+    setBatchExceptionType('暂停');
+    setBatchExceptionReason('');
+    setBatchExceptionDesc('');
   };
 
   const renderGroup = (key: keyof typeof groupedOrders) => {
@@ -293,6 +364,235 @@ export default function PendingOrders() {
 
   return (
     <div className="flex h-full flex-col bg-slate-50">
+      {showSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="flex flex-col items-center rounded-2xl bg-white p-10 shadow-2xl animate-fade-in">
+            <div className="mb-4 rounded-full bg-green-100 p-4">
+              <CheckCircle2 className="h-12 w-12 text-green-600" />
+            </div>
+            <div className="text-2xl font-bold text-slate-800">操作成功！</div>
+            <div className="mt-2 text-slate-500">已成功处理 {selectedOrderIds.length} 条医嘱</div>
+          </div>
+        </div>
+      )}
+
+      {showBatchExecuteModal && !showBatchSignature && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div className="text-xl font-bold text-slate-800">批量执行确认</div>
+              <button
+                onClick={() => setShowBatchExecuteModal(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="mb-4 rounded-xl border-2 border-primary-200 bg-primary-50 p-4">
+                <div className="mb-2 flex items-center gap-2 text-primary-700">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="text-base font-bold">请确认以下信息</span>
+                </div>
+                <div className="text-sm text-primary-600">
+                  即将批量执行 <span className="font-bold">{selectedOrderIds.length}</span> 条医嘱
+                </div>
+              </div>
+
+              <div className="mb-4 max-h-60 overflow-y-auto rounded-xl border border-slate-200">
+                {selectedOrderIds.slice(0, 5).map((orderId) => {
+                  const order = orders.find((o) => o.id === orderId);
+                  const patient = patientMap.get(order?.patientId || '');
+                  return order ? (
+                    <div key={orderId} className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0">
+                      <CheckCircle2 className="h-5 w-5 text-primary-500 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-slate-800 truncate">
+                          {patient?.bedNo} {patient?.name} - {order.content}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          计划时间：{formatTime(order.plannedTime)}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null;
+                })}
+                {selectedOrderIds.length > 5 && (
+                  <div className="px-4 py-3 text-center text-sm text-slate-500 border-t border-slate-100">
+                    还有 {selectedOrderIds.length - 5} 条医嘱未显示...
+                  </div>
+                )}
+              </div>
+
+              <div className="mb-4 rounded-lg bg-amber-50 p-4">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-sm text-amber-700">
+                    <span className="font-bold">重要提示：</span>
+                    批量执行将跳过扫码核对环节，默认已完成患者身份核对。请确保已人工核对无误后再执行。
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowBatchExecuteModal(false)}
+                  className="flex-1 rounded-xl border border-slate-300 bg-white px-5 py-3 text-base font-semibold text-slate-700 transition-all hover:bg-slate-50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => setShowBatchSignature(true)}
+                  className="flex-1 rounded-xl bg-primary-500 px-5 py-3 text-base font-semibold text-white transition-all hover:bg-primary-600 active:bg-primary-700"
+                >
+                  签名确认执行
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatchExceptionModal && !showBatchSignature && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+              <div className="text-xl font-bold text-slate-800">批量异常登记</div>
+              <button
+                onClick={() => {
+                  setShowBatchExceptionModal(false);
+                  resetBatchForm();
+                }}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="mb-4 rounded-xl border-2 border-amber-200 bg-amber-50 p-4">
+                <div className="mb-2 flex items-center gap-2 text-amber-700">
+                  <AlertTriangle className="h-5 w-5" />
+                  <span className="text-base font-bold">批量标记异常</span>
+                </div>
+                <div className="text-sm text-amber-600">
+                  即将为 <span className="font-bold">{selectedOrderIds.length}</span> 条医嘱登记异常
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    异常类型
+                  </label>
+                  <select
+                    value={batchExceptionType}
+                    onChange={(e) => setBatchExceptionType(e.target.value as ExceptionRecord['type'])}
+                    className="w-full rounded-lg border border-slate-300 px-4 py-3 text-base text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                  >
+                    <option value="拒绝执行">拒绝执行</option>
+                    <option value="补录">补录</option>
+                    <option value="暂停">暂停</option>
+                    <option value="冲突">冲突</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    异常原因
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {presetReasons.map((reason) => (
+                      <button
+                        key={reason}
+                        type="button"
+                        onClick={() => setBatchExceptionReason(reason)}
+                        className={cn(
+                          'rounded-lg border px-4 py-2 text-sm font-medium transition-colors',
+                          batchExceptionReason === reason
+                            ? 'border-primary-500 bg-primary-50 text-primary-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                        )}
+                      >
+                        {reason}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {batchExceptionReason === '其他' && (
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                      自定义原因
+                    </label>
+                    <input
+                      type="text"
+                      value={batchExceptionReason === '其他' ? batchExceptionDesc : ''}
+                      onChange={(e) => setBatchExceptionDesc(e.target.value)}
+                      placeholder="请输入自定义原因"
+                      className="input-base"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    详细说明
+                  </label>
+                  <textarea
+                    value={batchExceptionReason !== '其他' ? batchExceptionDesc : ''}
+                    onChange={(e) => setBatchExceptionDesc(e.target.value)}
+                    placeholder="请详细描述异常情况..."
+                    rows={4}
+                    className="input-base resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowBatchExceptionModal(false);
+                    resetBatchForm();
+                  }}
+                  className="flex-1 rounded-xl border border-slate-300 bg-white px-5 py-3 text-base font-semibold text-slate-700 transition-all hover:bg-slate-50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => setShowBatchSignature(true)}
+                  disabled={
+                    !batchExceptionReason ||
+                    (batchExceptionReason === '其他' && !batchExceptionDesc.trim()) ||
+                    (batchExceptionReason !== '其他' && !batchExceptionDesc.trim())
+                  }
+                  className="flex-1 rounded-xl bg-primary-500 px-5 py-3 text-base font-semibold text-white transition-all hover:bg-primary-600 active:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  签名确认
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatchSignature && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl">
+            <div className="px-6 pt-6">
+              <div className="text-xl font-bold text-slate-800">护士签名确认</div>
+              <div className="mt-1 text-sm text-slate-500">
+                执行人：{currentUser?.name}（工号：{currentUser?.jobNo}）
+              </div>
+            </div>
+            <SignaturePad
+              onConfirm={showBatchExecuteModal ? handleConfirmBatchExecute : handleConfirmBatchException}
+              onCancel={() => setShowBatchSignature(false)}
+              width={600}
+              height={200}
+            />
+          </div>
+        </div>
+      )}
       <div className="border-b border-slate-200 bg-white">
         <div className="overflow-x-auto px-4 py-3">
           <div className="flex gap-3">

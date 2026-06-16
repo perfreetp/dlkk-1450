@@ -26,22 +26,29 @@ import type { Patient, Order } from '@/types';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
-const STEPS = [
-  { key: 1, title: '腕带扫码' },
-  { key: 2, title: '患者确认' },
-  { key: 3, title: '药品扫码' },
-  { key: 4, title: '双重校验' },
-  { key: 5, title: '签名执行' },
-];
+const getSteps = (orderType: string | null) => {
+  const isDrugOrder = orderType === '药品';
+  return [
+    { key: 1 as Step, title: '腕带扫码' },
+    { key: 2 as Step, title: '患者确认' },
+    ...(isDrugOrder ? [{ key: 3 as Step, title: '药品扫码' }] : []),
+    { key: 4 as Step, title: isDrugOrder ? '双重校验' : '信息校验' },
+    { key: 5 as Step, title: '签名执行' },
+  ];
+};
 
 interface StepIndicatorProps {
   currentStep: Step;
+  orderType: string | null;
 }
 
-function StepIndicator({ currentStep }: StepIndicatorProps) {
+function StepIndicator({ currentStep, orderType }: StepIndicatorProps) {
+  const STEPS = getSteps(orderType);
+  const displayStepNumbers = STEPS.map((s, i) => ({ ...s, displayKey: i + 1 }));
+
   return (
     <div className="flex items-center justify-center px-4">
-      {STEPS.map((step, index) => {
+      {displayStepNumbers.map((step, index) => {
         const isCompleted = step.key < currentStep;
         const isCurrent = step.key === currentStep;
 
@@ -56,7 +63,7 @@ function StepIndicator({ currentStep }: StepIndicatorProps) {
                   !isCompleted && !isCurrent && 'bg-slate-200 text-slate-500',
                 )}
               >
-                {isCompleted ? <Check className="h-5 w-5" /> : step.key}
+                {isCompleted ? <Check className="h-5 w-5" /> : step.displayKey}
               </div>
               <span
                 className={cn(
@@ -67,7 +74,7 @@ function StepIndicator({ currentStep }: StepIndicatorProps) {
                 {step.title}
               </span>
             </div>
-            {index < STEPS.length - 1 && (
+            {index < displayStepNumbers.length - 1 && (
               <div
                 className={cn(
                   'mx-2 h-1 w-12 rounded md:w-20',
@@ -166,6 +173,8 @@ export default function ScanVerify() {
   const [drugVerified, setDrugVerified] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [executionSuccess, setExecutionSuccess] = useState(false);
+  const [wristbandError, setWristbandError] = useState('');
+  const [scanError, setScanError] = useState('');
 
   useEffect(() => {
     if (orderId) {
@@ -182,26 +191,34 @@ export default function ScanVerify() {
 
   const handleScanWristband = () => {
     if (!wristbandInput.trim()) return;
+    setWristbandError('');
     const result = verifyWristband(wristbandInput.trim());
-    if (result) {
-      setVerifiedPatient(result);
-      setWristbandVerified(true);
-      setTimeout(() => setCurrentStep(2), 500);
-    } else {
+
+    if (!result) {
       setWristbandVerified(false);
+      setWristbandError('腕带条码无效，请检查腕带');
+      return;
     }
+
+    if (currentOrder && result.id !== currentOrder.patientId) {
+      const orderPatient = patients.find((p) => p.id === currentOrder.patientId);
+      setWristbandVerified(false);
+      setWristbandError(
+        `患者不匹配！当前医嘱属于【${orderPatient?.bedNo || ''} ${orderPatient?.name || ''}】，您扫描的是【${result.bedNo} ${result.name}】，请核对后重新扫描`
+      );
+      return;
+    }
+
+    setVerifiedPatient(result);
+    setWristbandVerified(true);
+    setTimeout(() => setCurrentStep(2), 500);
   };
 
   const handleMockScanWristband = () => {
+    setWristbandError('');
     if (patient) {
       setWristbandInput(patient.wristbandCode);
       setVerifiedPatient(patient);
-      setWristbandVerified(true);
-      setTimeout(() => setCurrentStep(2), 500);
-    } else if (patients.length > 0) {
-      const randomPatient = patients[Math.floor(Math.random() * patients.length)];
-      setWristbandInput(randomPatient.wristbandCode);
-      setVerifiedPatient(randomPatient);
       setWristbandVerified(true);
       setTimeout(() => setCurrentStep(2), 500);
     }
@@ -209,7 +226,12 @@ export default function ScanVerify() {
 
   const handleStep2Continue = () => {
     if (patientConfirmed) {
-      setCurrentStep(3);
+      if (currentOrder?.type === '药品') {
+        setCurrentStep(3);
+      } else {
+        setDrugVerified(true);
+        setCurrentStep(4);
+      }
     }
   };
 
@@ -281,7 +303,7 @@ export default function ScanVerify() {
             <span className="text-sm font-medium">返回</span>
           </button>
           <div className="ml-auto mr-auto">
-            <StepIndicator currentStep={currentStep} />
+            <StepIndicator currentStep={currentStep} orderType={currentOrder?.type || null} />
           </div>
           <div className="w-20" />
         </div>
@@ -353,6 +375,18 @@ export default function ScanVerify() {
                   </button>
                 </div>
               </div>
+
+              {wristbandError && (
+                <div className="mt-4 rounded-xl border-2 border-red-400 bg-red-50 p-4 animate-slide-in">
+                  <div className="flex items-start gap-3">
+                    <XCircle className="h-6 w-6 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-base font-bold text-red-700">患者不匹配</div>
+                      <div className="text-sm text-red-600 mt-1">{wristbandError}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {verifiedPatient && (
                 <div className="mt-6 animate-slide-in">
@@ -516,11 +550,18 @@ export default function ScanVerify() {
           {currentStep === 4 && (
             <div className="animate-fade-in">
               <div className="mb-8 text-center">
-                <h1 className="mb-2 text-3xl font-bold text-slate-800">双重校验结果</h1>
-                <p className="text-slate-500">请确认腕带与药品核对结果</p>
+                <h1 className="mb-2 text-3xl font-bold text-slate-800">
+                  {currentOrder?.type === '药品' ? '双重校验结果' : '信息校验结果'}
+                </h1>
+                <p className="text-slate-500">
+                  {currentOrder?.type === '药品' ? '请确认腕带与药品核对结果' : '请确认患者信息核对结果'}
+                </p>
               </div>
 
-              <div className="mb-6 grid gap-4 md:grid-cols-2">
+              <div className={cn(
+                'mb-6 grid gap-4',
+                currentOrder?.type === '药品' ? 'md:grid-cols-2' : 'md:grid-cols-1 max-w-lg mx-auto'
+              )}>
                 <div
                   className={cn(
                     'rounded-xl border-2 p-6 text-center transition-all',
@@ -557,50 +598,74 @@ export default function ScanVerify() {
                   )}
                 </div>
 
-                <div
-                  className={cn(
-                    'rounded-xl border-2 p-6 text-center transition-all',
-                    drugVerified
-                      ? 'border-green-300 bg-green-50'
-                      : 'border-red-300 bg-red-50',
-                  )}
-                >
+                {currentOrder?.type === '药品' && (
                   <div
                     className={cn(
-                      'mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full',
-                      drugVerified ? 'bg-green-100' : 'bg-red-100',
+                      'rounded-xl border-2 p-6 text-center transition-all',
+                      drugVerified
+                        ? 'border-green-300 bg-green-50'
+                        : 'border-red-300 bg-red-50',
                     )}
                   >
-                    {drugVerified ? (
-                      <CheckCircle2 className="h-12 w-12 text-green-600" />
-                    ) : (
-                      <XCircle className="h-12 w-12 text-red-600" />
-                    )}
-                  </div>
-                  <div className="mb-1 text-xl font-bold text-slate-800">药品核对</div>
-                  <div
-                    className={cn(
-                      'text-base font-semibold',
-                      drugVerified ? 'text-green-600' : 'text-red-600',
-                    )}
-                  >
-                    {drugVerified ? '核对通过' : '核对不通过'}
-                  </div>
-                  {currentOrder && (
-                    <div className="mt-3 rounded-lg bg-white/70 p-3 text-sm text-slate-600">
-                      {currentOrder.content}
+                    <div
+                      className={cn(
+                        'mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full',
+                        drugVerified ? 'bg-green-100' : 'bg-red-100',
+                      )}
+                    >
+                      {drugVerified ? (
+                        <CheckCircle2 className="h-12 w-12 text-green-600" />
+                      ) : (
+                        <XCircle className="h-12 w-12 text-red-600" />
+                      )}
                     </div>
-                  )}
-                </div>
+                    <div className="mb-1 text-xl font-bold text-slate-800">药品核对</div>
+                    <div
+                      className={cn(
+                        'text-base font-semibold',
+                        drugVerified ? 'text-green-600' : 'text-red-600',
+                      )}
+                    >
+                      {drugVerified ? '核对通过' : '核对不通过'}
+                    </div>
+                    {currentOrder && (
+                      <div className="mt-3 rounded-lg bg-white/70 p-3 text-sm text-slate-600">
+                        {currentOrder.content}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {currentOrder?.type !== '药品' && (
+                  <div
+                    className={cn(
+                      'rounded-xl border-2 p-4 text-center transition-all',
+                      'border-primary-200 bg-primary-50',
+                    )}
+                  >
+                    <div className="flex items-center justify-center gap-2 text-primary-700">
+                      <Info className="h-5 w-5" />
+                      <span className="text-sm font-medium">
+                        该医嘱为【{currentOrder?.type}】类医嘱，无需药品扫码核对
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {allVerified ? (
                 <div className="mb-6 rounded-xl border-2 border-green-300 bg-green-50 p-6 text-center">
                   <div className="mb-3 flex items-center justify-center gap-2">
                     <ShieldCheck className="h-10 w-10 text-green-600" />
-                    <span className="text-2xl font-bold text-green-700">双重核对通过</span>
+                    <span className="text-2xl font-bold text-green-700">
+                      {currentOrder?.type === '药品' ? '双重核对通过' : '信息核对通过'}
+                    </span>
                   </div>
-                  <p className="text-green-600">腕带与药品核对均已通过，可以执行医嘱</p>
+                  <p className="text-green-600">
+                    {currentOrder?.type === '药品'
+                      ? '腕带与药品核对均已通过，可以执行医嘱'
+                      : '患者身份信息已核对通过，可以执行医嘱'}
+                  </p>
                 </div>
               ) : (
                 <div className="mb-6 rounded-xl border-2 border-red-300 bg-red-50 p-6">
@@ -609,7 +674,7 @@ export default function ScanVerify() {
                     <span className="text-xl font-bold text-red-700">核对不通过</span>
                   </div>
                   <p className="mb-4 text-red-600">
-                    腕带或药品核对未通过，禁止执行医嘱。请确认扫码是否正确，或进行异常处理。
+                    核对未通过，禁止执行医嘱。请确认扫码是否正确，或进行异常处理。
                   </p>
                   <button
                     onClick={handleException}
@@ -623,7 +688,7 @@ export default function ScanVerify() {
 
               <div className="flex gap-3">
                 <button
-                  onClick={() => setCurrentStep(3)}
+                  onClick={() => setCurrentStep(currentOrder?.type === '药品' ? 3 : 2)}
                   className="flex items-center justify-center gap-2 rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-lg font-semibold text-slate-700 transition-all hover:bg-slate-50"
                 >
                   <ArrowLeft className="h-5 w-5" />

@@ -13,8 +13,8 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store';
 
 const navItems = [
-  { to: '/pending', icon: ClipboardList, label: '待执行医嘱' },
-  { to: '/verify', icon: ScanLine, label: '扫码核对' },
+  { to: '/orders/pending', icon: ClipboardList, label: '待执行医嘱' },
+  { to: '/scan', icon: ScanLine, label: '扫码核对' },
   { to: '/records', icon: FileText, label: '执行记录' },
   { to: '/exceptions', icon: AlertTriangle, label: '异常处理' },
   { to: '/handover', icon: Handshake, label: '交接确认' },
