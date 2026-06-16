@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Clock,
@@ -34,10 +35,28 @@ const presetReasons = ['药品破损', '患者拒绝', '医嘱疑问', '过敏�
 type TabType = '待处理' | '处理中' | '已完成';
 
 export default function ExceptionHandling() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const paramOrderId = searchParams.get('orderId');
+  const paramPatientId = searchParams.get('patientId');
+
   const { exceptionRecords, patients, orders, currentUser, reportException, reviewException } =
     useAppStore();
 
   const [activeTab, setActiveTab] = useState<TabType>('待处理');
+
+  useEffect(() => {
+    if (paramOrderId) {
+      setSelectedOrderId(paramOrderId);
+      setShowNewModal(true);
+    }
+  }, [paramOrderId]);
+
+  const clearUrlParams = () => {
+    searchParams.delete('orderId');
+    searchParams.delete('patientId');
+    setSearchParams(searchParams, { replace: true });
+  };
   const [showDetailModal, setShowDetailModal] = useState<ExceptionRecord | null>(null);
   const [showHandleModal, setShowHandleModal] = useState<ExceptionRecord | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
@@ -105,13 +124,21 @@ export default function ExceptionHandling() {
     setShowSignature(false);
   };
 
+  const closeAllModals = () => {
+    setShowNewModal(false);
+    setShowHandleModal(null);
+    setShowDetailModal(null);
+    clearUrlParams();
+    resetForm();
+  };
+
   const handleConfirmSignature = (_signatureData: string) => {
     if (!currentUser) return;
 
     const orderId = showHandleModal ? showHandleModal.orderId : selectedOrderId;
     const patientId = showHandleModal
       ? showHandleModal.patientId
-      : orderMap.get(selectedOrderId)?.patientId || '';
+      : orderMap.get(selectedOrderId)?.patientId || paramPatientId || '';
 
     const finalReason = selectedReason === '其他' ? customReason : selectedReason;
 
@@ -127,9 +154,8 @@ export default function ExceptionHandling() {
     });
 
     setShowSignature(false);
-    setShowNewModal(false);
-    setShowHandleModal(null);
-    resetForm();
+    closeAllModals();
+    setActiveTab('待处理');
   };
 
   const handleReviewSignature = (_signatureData: string) => {
@@ -146,7 +172,7 @@ export default function ExceptionHandling() {
     setShowReviewSignature(false);
     setReviewAction(null);
     setReviewOpinion('');
-    setShowHandleModal(null);
+    closeAllModals();
   };
 
   return (
@@ -518,10 +544,7 @@ export default function ExceptionHandling() {
                 {showNewModal ? '新增异常记录' : isReviewer ? '审核异常' : '处理异常'}
               </h2>
               <button
-                onClick={() => {
-                  setShowNewModal(false);
-                  setShowHandleModal(null);
-                }}
+                onClick={closeAllModals}
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
                 <X className="h-5 w-5" />
@@ -687,10 +710,7 @@ export default function ExceptionHandling() {
 
             <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-4">
               <button
-                onClick={() => {
-                  setShowNewModal(false);
-                  setShowHandleModal(null);
-                }}
+                onClick={closeAllModals}
                 className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
               >
                 取消

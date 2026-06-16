@@ -14,6 +14,49 @@ import { mockOrders } from '../data/orders';
 import { mockExecutionRecords, mockExceptionRecords } from '../data/records';
 import { genId } from '../utils/id';
 
+const STORAGE_KEY = 'inpatient-order-verify-store-v1';
+
+interface PersistedState {
+  currentUser: User | null;
+  orders: Order[];
+  executionRecords: ExecutionRecord[];
+  exceptionRecords: ExceptionRecord[];
+  handoverRecords: HandoverRecord[];
+  selectedPatientId: string | null;
+  selectedOrderIds: string[];
+}
+
+function loadPersistedState(): Partial<PersistedState> | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.warn('Failed to load persisted state:', e);
+  }
+  return null;
+}
+
+function persistState(state: PersistedState) {
+  try {
+    const toSave: PersistedState = {
+      currentUser: state.currentUser,
+      orders: state.orders,
+      executionRecords: state.executionRecords,
+      exceptionRecords: state.exceptionRecords,
+      handoverRecords: state.handoverRecords,
+      selectedPatientId: state.selectedPatientId,
+      selectedOrderIds: state.selectedOrderIds,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  } catch (e) {
+    console.warn('Failed to persist state:', e);
+  }
+}
+
+const persisted = loadPersistedState();
+
 interface AppState {
   currentUser: User | null;
   patients: Patient[];
@@ -46,7 +89,7 @@ interface AppState {
     signature: string,
     verifyPatient?: boolean,
     verifyDrug?: boolean,
-  ) => void;
+  ) => number;
   reportException: (record: Omit<ExceptionRecord, 'id' | 'reportTime' | 'status'>) => void;
   createHandover: (record: Omit<HandoverRecord, 'id' | 'handoverTime'>) => void;
   verifyWristband: (code: string) => Patient | undefined;
@@ -58,31 +101,35 @@ interface AppState {
     reviewerId: string,
     reviewerName: string,
   ) => void;
+  resetToInitialData: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  currentUser: mockUsers[0],
+  currentUser: persisted?.currentUser ?? mockUsers[0],
   patients: mockPatients,
-  orders: mockOrders,
-  executionRecords: mockExecutionRecords,
-  exceptionRecords: mockExceptionRecords,
-  handoverRecords: [],
-  selectedPatientId: null,
-  selectedOrderIds: [],
+  orders: persisted?.orders ?? mockOrders,
+  executionRecords: persisted?.executionRecords ?? mockExecutionRecords,
+  exceptionRecords: persisted?.exceptionRecords ?? mockExceptionRecords,
+  handoverRecords: persisted?.handoverRecords ?? [],
+  selectedPatientId: persisted?.selectedPatientId ?? null,
+  selectedOrderIds: persisted?.selectedOrderIds ?? [],
 
   login: (jobNo: string) => {
     const user = mockUsers.find((u) => u.jobNo === jobNo);
     if (user) {
       set({ currentUser: user });
+      persistState(get());
     }
   },
 
   logout: () => {
     set({ currentUser: null });
+    persistState(get());
   },
 
   selectPatient: (patientId: string | null) => {
     set({ selectedPatientId: patientId, selectedOrderIds: [] });
+    persistState(get());
   },
 
   toggleOrderSelect: (orderId: string) => {
@@ -92,14 +139,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       set({ selectedOrderIds: [...selectedOrderIds, orderId] });
     }
+    persistState(get());
   },
 
   clearOrderSelect: () => {
     set({ selectedOrderIds: [] });
+    persistState(get());
   },
 
   selectAllOrders: (orderIds: string[]) => {
     set({ selectedOrderIds: orderIds });
+    persistState(get());
   },
 
   getOrdersByPatient: (patientId: string) => {
@@ -159,6 +209,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       executionRecords: [...executionRecords, newRecord],
       selectedOrderIds: get().selectedOrderIds.filter((id) => id !== orderId),
     });
+    persistState(get());
   },
 
   executeOrdersBatch: (
@@ -168,9 +219,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     verifyPatient = false,
     verifyDrug = false,
   ) => {
-    orderIds.forEach((orderId) => {
-      get().executeOrder(orderId, executorId, signature, verifyPatient, verifyDrug);
+    let count = 0;
+    const validOrderIds = orderIds.filter((id) => {
+      const order = get().orders.find((o) => o.id === id);
+      return order && order.status !== '已执行';
     });
+    validOrderIds.forEach((orderId) => {
+      get().executeOrder(orderId, executorId, signature, verifyPatient, verifyDrug);
+      count++;
+    });
+    return count;
   },
 
   reportException: (record) => {
@@ -191,6 +249,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       orders: updatedOrders,
       exceptionRecords: [...exceptionRecords, newException],
     });
+    persistState(get());
   },
 
   createHandover: (record) => {
@@ -203,6 +262,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
 
     set({ handoverRecords: [...handoverRecords, newHandover] });
+    persistState(get());
   },
 
   verifyWristband: (code: string) => {
@@ -237,5 +297,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     );
 
     set({ exceptionRecords: updatedRecords });
+    persistState(get());
+  },
+
+  resetToInitialData: () => {
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      currentUser: mockUsers[0],
+      orders: mockOrders,
+      executionRecords: mockExecutionRecords,
+      exceptionRecords: mockExceptionRecords,
+      handoverRecords: [],
+      selectedPatientId: null,
+      selectedOrderIds: [],
+    });
   },
 }));

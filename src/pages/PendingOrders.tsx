@@ -178,6 +178,7 @@ export default function PendingOrders() {
   const [showBatchExceptionModal, setShowBatchExceptionModal] = useState(false);
   const [showBatchSignature, setShowBatchSignature] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [batchExceptionType, setBatchExceptionType] = useState<ExceptionRecord['type']>('暂停');
   const [batchExceptionReason, setBatchExceptionReason] = useState('');
   const [batchExceptionDesc, setBatchExceptionDesc] = useState('');
@@ -282,19 +283,24 @@ export default function PendingOrders() {
   const handleConfirmBatchExecute = (signatureData: string) => {
     if (!currentUser || selectedOrderIds.length === 0) return;
 
-    executeOrdersBatch(selectedOrderIds, currentUser.id, signatureData, true, false);
+    const count = selectedOrderIds.length;
+    const processedCount = executeOrdersBatch(selectedOrderIds, currentUser.id, signatureData, true, false);
+    const actualCount = processedCount > 0 ? processedCount : count;
 
     setShowBatchSignature(false);
     setShowBatchExecuteModal(false);
     clearOrderSelect();
+    setSuccessMessage(`已成功批量执行 ${actualCount} 条医嘱`);
     setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 2000);
+    setTimeout(() => setShowSuccess(false), 2500);
   };
 
   const handleConfirmBatchException = (signatureData: string) => {
     if (!currentUser || selectedOrderIds.length === 0) return;
 
+    const count = selectedOrderIds.length;
     const finalReason = batchExceptionReason === '其他' ? batchExceptionDesc : batchExceptionReason;
+    let processedCount = 0;
 
     selectedOrderIds.forEach((orderId) => {
       const order = orders.find((o) => o.id === orderId);
@@ -310,13 +316,15 @@ export default function PendingOrders() {
         reporterId: currentUser.id,
         reporterName: currentUser.name,
       });
+      processedCount++;
     });
 
     setShowBatchSignature(false);
     setShowBatchExceptionModal(false);
     clearOrderSelect();
+    setSuccessMessage(`已成功登记 ${processedCount} 条异常记录`);
     setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 2000);
+    setTimeout(() => setShowSuccess(false), 2500);
   };
 
   const resetBatchForm = () => {
@@ -371,7 +379,7 @@ export default function PendingOrders() {
               <CheckCircle2 className="h-12 w-12 text-green-600" />
             </div>
             <div className="text-2xl font-bold text-slate-800">操作成功！</div>
-            <div className="mt-2 text-slate-500">已成功处理 {selectedOrderIds.length} 条医嘱</div>
+            <div className="mt-2 text-slate-500">{successMessage}</div>
           </div>
         </div>
       )}

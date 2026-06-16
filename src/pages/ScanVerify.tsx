@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   QrCode,
@@ -16,11 +16,15 @@ import {
   Home,
   ChevronsRight,
   Info,
+  ClipboardList,
+  Search,
+  Clock,
+  Stethoscope,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import SignaturePad from '@/components/SignaturePad';
 import StatusBadge from '@/components/StatusBadge';
-import { formatTime } from '@/utils/time';
+import { formatTime, isOverdue, isUpcoming } from '@/utils/time';
 import { cn } from '@/lib/utils';
 import type { Patient, Order } from '@/types';
 
@@ -175,6 +179,24 @@ export default function ScanVerify() {
   const [executionSuccess, setExecutionSuccess] = useState(false);
   const [wristbandError, setWristbandError] = useState('');
   const [scanError, setScanError] = useState('');
+  const [orderSearchText, setOrderSearchText] = useState('');
+
+  const pendingOrders = useMemo(() => {
+    let result = getPendingOrders();
+    if (orderSearchText.trim()) {
+      const kw = orderSearchText.trim().toLowerCase();
+      result = result.filter((o) => {
+        const p = patients.find((pt) => pt.id === o.patientId);
+        return (
+          o.content.toLowerCase().includes(kw) ||
+          p?.name.toLowerCase().includes(kw) ||
+          p?.bedNo.toLowerCase().includes(kw) ||
+          o.orderNo.toLowerCase().includes(kw)
+        );
+      });
+    }
+    return result;
+  }, [getPendingOrders, patients, orderSearchText]);
 
   useEffect(() => {
     if (orderId) {
@@ -188,6 +210,24 @@ export default function ScanVerify() {
   const patient = currentOrder
     ? patients.find((p) => p.id === currentOrder.patientId)
     : undefined;
+
+  const resetFlow = () => {
+    setCurrentStep(1);
+    setWristbandInput('');
+    setDrugInput('');
+    setVerifiedPatient(null);
+    setPatientConfirmed(false);
+    setWristbandVerified(false);
+    setDrugVerified(false);
+    setWristbandError('');
+    setScanError('');
+  };
+
+  const handleSelectOrder = (order: Order) => {
+    navigate(`/scan?orderId=${order.id}`, { replace: true });
+    setCurrentOrder(order);
+    resetFlow();
+  };
 
   const handleScanWristband = () => {
     if (!wristbandInput.trim()) return;
@@ -263,7 +303,7 @@ export default function ScanVerify() {
   };
 
   const handleReturnList = () => {
-    navigate('/pending');
+    navigate('/orders/pending');
   };
 
   const handleNextOrder = () => {
@@ -271,22 +311,17 @@ export default function ScanVerify() {
     const next = pending.find((o) => o.id !== currentOrder?.id);
     if (next) {
       navigate(`/scan?orderId=${next.id}`);
-      setCurrentStep(1);
-      setWristbandInput('');
-      setDrugInput('');
-      setVerifiedPatient(null);
-      setPatientConfirmed(false);
-      setWristbandVerified(false);
-      setDrugVerified(false);
+      resetFlow();
       setExecutionSuccess(false);
       setCurrentOrder(next);
     } else {
-      navigate('/pending');
+      navigate('/orders/pending');
     }
   };
 
   const handleException = () => {
-    console.log('跳转到异常处理');
+    if (!currentOrder) return;
+    navigate(`/exceptions?orderId=${currentOrder.id}&patientId=${currentOrder.patientId}`);
   };
 
   const allVerified = wristbandVerified && drugVerified;
@@ -311,7 +346,121 @@ export default function ScanVerify() {
 
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto max-w-3xl">
-          {currentStep === 1 && (
+          {!currentOrder && (
+            <div className="animate-fade-in">
+              <div className="mb-6 text-center">
+                <h1 className="mb-2 text-3xl font-bold text-slate-800">选择待执行医嘱</h1>
+                <p className="text-slate-500">请选择一条医嘱开始扫码核对流程</p>
+              </div>
+
+              <div className="mb-5 relative">
+                <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={orderSearchText}
+                  onChange={(e) => setOrderSearchText(e.target.value)}
+                  placeholder="搜索患者姓名、床号、医嘱内容..."
+                  className="w-full rounded-xl border-2 border-slate-200 bg-white py-3.5 pl-12 pr-4 text-base text-slate-800 placeholder:text-slate-400 focus:border-primary-500 focus:outline-none focus:ring-4 focus:ring-primary-100"
+                />
+              </div>
+
+              {pendingOrders.length === 0 ? (
+                <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-white p-12 text-center">
+                  <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-slate-100">
+                    <ClipboardList className="h-10 w-10 text-slate-400" />
+                  </div>
+                  <div className="mb-2 text-xl font-bold text-slate-700">暂无待执行医嘱</div>
+                  <div className="mb-6 text-sm text-slate-500">当前没有需要执行的医嘱</div>
+                  <div className="flex flex-col items-center gap-3">
+                    <button
+                      onClick={() => navigate('/orders/pending')}
+                      className="flex items-center gap-2 rounded-xl bg-primary-500 px-6 py-3 text-base font-semibold text-white shadow-sm transition-all hover:bg-primary-600"
+                    >
+                      <ClipboardList className="h-5 w-5" />
+                      查看医嘱列表
+                    </button>
+                    <button
+                      onClick={() => navigate('/records')}
+                      className="flex items-center gap-2 rounded-xl border-2 border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 transition-all hover:bg-slate-50"
+                    >
+                      <CheckCircle2 className="h-5 w-5" />
+                      查看执行记录
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingOrders.map((order) => {
+                    const p = patients.find((pt) => pt.id === order.patientId);
+                    const overdue = isOverdue(order.plannedTime);
+                    const upcoming = isUpcoming(order.plannedTime);
+                    return (
+                      <button
+                        key={order.id}
+                        onClick={() => handleSelectOrder(order)}
+                        className={cn(
+                          'w-full text-left rounded-xl border-2 p-5 transition-all duration-200',
+                          order.isConflict && 'border-red-400 bg-red-50 hover:shadow-md',
+                          !order.isConflict && overdue && 'border-red-300 bg-red-50/50 hover:shadow-md',
+                          !order.isConflict && !overdue && upcoming && 'border-amber-400 bg-amber-50/50 hover:shadow-md',
+                          !order.isConflict && !overdue && !upcoming && 'border-slate-200 bg-white hover:border-primary-400 hover:shadow-md',
+                        )}
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className={cn(
+                            'flex h-12 w-12 shrink-0 items-center justify-center rounded-xl',
+                            order.type === '药品' && 'bg-blue-100',
+                            order.type === '治疗' && 'bg-purple-100',
+                            order.type === '检查' && 'bg-cyan-100',
+                            order.type === '护理' && 'bg-green-100',
+                          )}>
+                            {order.type === '药品' && <Pill className="h-6 w-6 text-blue-600" />}
+                            {order.type === '治疗' && <Stethoscope className="h-6 w-6 text-purple-600" />}
+                            {order.type === '检查' && <QrCode className="h-6 w-6 text-cyan-600" />}
+                            {order.type === '护理' && <User className="h-6 w-6 text-green-600" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-2 flex flex-wrap items-center gap-2">
+                              <span className="text-lg font-bold text-slate-800">
+                                {p?.bedNo} {p?.name}
+                              </span>
+                              <StatusBadge status={order.type} variant="type" />
+                              <StatusBadge status={order.priority} variant="priority" />
+                              <StatusBadge status={order.status} variant="status" />
+                              {overdue && (
+                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                                  已超时
+                                </span>
+                              )}
+                              {!overdue && upcoming && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                                  即将执行
+                                </span>
+                              )}
+                            </div>
+                            <div className="mb-2 text-base font-semibold text-slate-700">{order.content}</div>
+                            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3.5 w-3.5" />
+                                计划时间：{formatTime(order.plannedTime)}
+                              </span>
+                              <span>开单医生：{order.doctorName}</span>
+                              <span>医嘱号：{order.orderNo}</span>
+                            </div>
+                          </div>
+                          <div className="shrink-0 flex items-center">
+                            <ArrowRight className="h-5 w-5 text-slate-400" />
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {currentOrder && currentStep === 1 && (
             <div className="animate-fade-in">
               <div className="mb-8 text-center">
                 <h1 className="mb-2 text-3xl font-bold text-slate-800">请扫描患者腕带</h1>
@@ -396,7 +545,7 @@ export default function ScanVerify() {
             </div>
           )}
 
-          {currentStep === 2 && verifiedPatient && (
+          {currentOrder && currentStep === 2 && verifiedPatient && (
             <div className="animate-fade-in">
               <div className="mb-6 text-center">
                 <h1 className="mb-2 text-3xl font-bold text-slate-800">请核对患者信息</h1>
@@ -547,7 +696,7 @@ export default function ScanVerify() {
             </div>
           )}
 
-          {currentStep === 4 && (
+          {currentOrder && currentStep === 4 && (
             <div className="animate-fade-in">
               <div className="mb-8 text-center">
                 <h1 className="mb-2 text-3xl font-bold text-slate-800">
