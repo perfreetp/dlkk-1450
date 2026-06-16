@@ -241,11 +241,32 @@ export default function HandoverConfirm() {
   const selectedNurse = nurseUsers.find((u) => u.id === selectedNurseId);
 
   const getExceptionCountForHandover = (record: HandoverRecord) => {
+    return getExceptionsForHandover(record).length;
+  };
+
+  const getExceptionsForHandover = (record: HandoverRecord) => {
+    // 先从交接的pendingOrders找到关联的患者
+    const relatedPatientIds = new Set<string>();
+    record.pendingOrders.forEach((orderId) => {
+      const order = orders.find((o) => o.id === orderId);
+      if (order) {
+        relatedPatientIds.add(order.patientId);
+      }
+    });
+
+    // 找出这些患者中状态为待审核、且报告时间在交接时间前24小时内的异常
     const handoverTime = new Date(record.handoverTime).getTime();
+    const twentyFourHours = 24 * 60 * 60 * 1000;
+
     return exceptionRecords.filter((r) => {
       const reportTime = new Date(r.reportTime).getTime();
-      return r.status === '待审核' && Math.abs(reportTime - handoverTime) < 4 * 60 * 60 * 1000;
-    }).length;
+      return (
+        r.status === '待审核' &&
+        relatedPatientIds.has(r.patientId) &&
+        reportTime <= handoverTime &&
+        handoverTime - reportTime <= twentyFourHours
+      );
+    });
   };
 
   const toggleOrderSelect = (orderId: string) => {
@@ -437,7 +458,7 @@ export default function HandoverConfirm() {
                   异常统计
                 </div>
                 <div className="rounded-xl border border-orange-200 bg-orange-50 p-5">
-                  <div className="flex items-center gap-4">
+                  <div className="mb-4 flex items-center gap-4">
                     <div className="rounded-full bg-orange-100 p-3">
                       <ShieldAlert className="h-8 w-8 text-orange-600" />
                     </div>
@@ -448,6 +469,42 @@ export default function HandoverConfirm() {
                       </div>
                     </div>
                   </div>
+                  {(() => {
+                    const relatedExceptions = getExceptionsForHandover(selectedHandoverRecord);
+                    if (relatedExceptions.length === 0) return null;
+                    return (
+                      <div className="mt-4 space-y-2 border-t border-orange-200 pt-4">
+                        {relatedExceptions.map((ex) => {
+                          const patient = patients.find((p) => p.id === ex.patientId);
+                          return (
+                            <div
+                              key={ex.id}
+                              className="flex items-start gap-3 rounded-lg bg-white p-3 border border-orange-100"
+                            >
+                              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-orange-500" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-semibold text-slate-800">
+                                    {patient?.bedNo || ''}床 {patient?.name || ''}
+                                  </span>
+                                  <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
+                                    {ex.type}
+                                  </span>
+                                  <span className="text-xs text-slate-500">
+                                    {formatTime(ex.reportTime)}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-600 line-clamp-2">
+                                  {ex.reason}
+                                  {ex.customReason ? `（${ex.customReason}）` : ''}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 

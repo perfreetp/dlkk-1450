@@ -125,6 +125,7 @@ function buildTimeline(
 ): TimelineNode[] {
   const nodes: TimelineNode[] = [];
 
+  // 1. 开立医嘱 - 始终添加（无论order是否存在都要有起点）
   if (order) {
     nodes.push({
       id: `create-${order.id}`,
@@ -132,44 +133,59 @@ function buildTimeline(
       time: order.createTime,
       operator: order.doctorName,
       title: '开立医嘱',
-      detail: `医嘱号：${order.orderNo}`,
+      detail: `医嘱号：${order.orderNo}${order.content ? ` · ${order.content}` : ''}`,
+      icon: getIcon('order_created'),
+      color: getIconColor('order_created'),
+    });
+  } else {
+    // 即使没有完整order，也要保留开立节点（从执行记录推断）
+    nodes.push({
+      id: `create-${record.orderId}`,
+      type: 'order_created',
+      time: record.executeTime,
+      operator: '系统记录',
+      title: '开立医嘱',
+      detail: `医嘱号：${record.orderId}`,
       icon: getIcon('order_created'),
       color: getIconColor('order_created'),
     });
   }
 
+  const isDrugOrder = order?.type === '药品';
+
+  // 2. 患者腕带核对 - 始终添加（保证流程完整性）
   const verifyPatientLog = record.operationLog.find((l) =>
     l.action.includes('腕带') || l.action.includes('患者'),
   );
-  if (verifyPatientLog || record.verifyPatient) {
-    nodes.push({
-      id: `verify-patient-${record.id}`,
-      type: 'verify_patient',
-      time: verifyPatientLog?.time || record.executeTime,
-      operator: verifyPatientLog?.operator || record.executorName,
-      title: `患者腕带核对${record.verifyPatient ? '通过' : '未通过'}`,
-      detail: verifyPatientLog?.detail,
-      icon: getIcon('verify_patient'),
-      color: getIconColor('verify_patient'),
-    });
-  }
+  nodes.push({
+    id: `verify-patient-${record.id}`,
+    type: 'verify_patient',
+    time: verifyPatientLog?.time || record.executeTime,
+    operator: verifyPatientLog?.operator || record.executorName,
+    title: `患者腕带核对${record.verifyPatient ? '通过' : '未通过'}`,
+    detail: verifyPatientLog?.detail || (record.verifyPatient ? '身份核验一致' : '身份核验未通过或未核验'),
+    icon: getIcon('verify_patient'),
+    color: getIconColor('verify_patient'),
+  });
 
-  const verifyDrugLog = record.operationLog.find((l) =>
-    l.action.includes('药品') || l.action.includes('条码'),
-  );
-  if (verifyDrugLog || record.verifyDrug) {
+  // 3. 药品条码核对 - 仅药品类医嘱添加
+  if (isDrugOrder) {
+    const verifyDrugLog = record.operationLog.find((l) =>
+      l.action.includes('药品') || l.action.includes('条码'),
+    );
     nodes.push({
       id: `verify-drug-${record.id}`,
       type: 'verify_drug',
       time: verifyDrugLog?.time || record.executeTime,
       operator: verifyDrugLog?.operator || record.executorName,
       title: `药品条码核对${record.verifyDrug ? '通过' : '未通过'}`,
-      detail: verifyDrugLog?.detail,
+      detail: verifyDrugLog?.detail || (record.verifyDrug ? '药品信息核对一致' : '药品信息核对未通过或未核验'),
       icon: getIcon('verify_drug'),
       color: getIconColor('verify_drug'),
     });
   }
 
+  // 4. 医嘱执行 - 始终添加
   const executeLog = record.operationLog.find(
     (l) => l.action.includes('执行') || l.action.includes('确认') || l.action.includes('完成'),
   );
@@ -179,7 +195,7 @@ function buildTimeline(
     time: executeLog?.time || record.executeTime,
     operator: record.executorName,
     title: `医嘱执行（${record.status}）`,
-    detail: executeLog?.detail || record.remark,
+    detail: executeLog?.detail || record.remark || '护士执行签字确认',
     icon: getIcon('execute'),
     color: getIconColor('execute'),
   });
