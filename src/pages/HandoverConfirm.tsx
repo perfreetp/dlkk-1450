@@ -19,7 +19,9 @@ import {
   PenLine,
   CheckCircle2,
   XCircle,
+  X,
 } from 'lucide-react';
+import type { HandoverRecord } from '@/types';
 import { useAppStore } from '@/store';
 import StatusBadge from '@/components/StatusBadge';
 import SignaturePad from '@/components/SignaturePad';
@@ -176,6 +178,7 @@ export default function HandoverConfirm() {
   const [showIncomingPad, setShowIncomingPad] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [selectedHandoverRecord, setSelectedHandoverRecord] = useState<HandoverRecord | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -236,6 +239,14 @@ export default function HandoverConfirm() {
   }, [selectedNurseId, outgoingSignature, incomingSignature]);
 
   const selectedNurse = nurseUsers.find((u) => u.id === selectedNurseId);
+
+  const getExceptionCountForHandover = (record: HandoverRecord) => {
+    const handoverTime = new Date(record.handoverTime).getTime();
+    return exceptionRecords.filter((r) => {
+      const reportTime = new Date(r.reportTime).getTime();
+      return r.status === '待审核' && Math.abs(reportTime - handoverTime) < 4 * 60 * 60 * 1000;
+    }).length;
+  };
 
   const toggleOrderSelect = (orderId: string) => {
     setSelectedOrderIds((prev) =>
@@ -302,6 +313,197 @@ export default function HandoverConfirm() {
             </div>
             <div className="text-2xl font-bold text-slate-800">交接成功！</div>
             <div className="mt-2 text-slate-500">交接记录已保存</div>
+          </div>
+        </div>
+      )}
+
+      {selectedHandoverRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center gap-2">
+                <History className="h-6 w-6 text-primary-500" />
+                <span className="text-xl font-bold text-slate-800">交接记录详情</span>
+              </div>
+              <button
+                onClick={() => setSelectedHandoverRecord(null)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="mb-6 rounded-xl bg-slate-50 p-5">
+                <div className="mb-4 flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-slate-600" />
+                  <span className="text-base font-bold text-slate-800">基本信息</span>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-sm text-slate-500">班次</div>
+                    <div className="mt-1">
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full px-3 py-1 text-sm font-bold text-white',
+                          getShiftColor(selectedHandoverRecord.shift),
+                        )}
+                      >
+                        {selectedHandoverRecord.shift}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-slate-500">交接时间</div>
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {formatDateTime(selectedHandoverRecord.handoverTime)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-slate-500">交班护士</div>
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {selectedHandoverRecord.outgoingNurseName}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-slate-500">接班护士</div>
+                    <div className="mt-1 text-lg font-bold text-slate-800">
+                      {selectedHandoverRecord.incomingNurseName}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <div className="mb-3 flex items-center gap-2 text-base font-bold text-slate-800">
+                  <ClipboardList className="h-5 w-5 text-primary-500" />
+                  交接医嘱清单（{selectedHandoverRecord.pendingOrders.length}）
+                </div>
+                {selectedHandoverRecord.pendingOrders.length === 0 ? (
+                  <div className="rounded-lg bg-slate-50 p-6 text-center text-slate-500">
+                    <ClipboardList className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+                    暂无交接医嘱
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedHandoverRecord.pendingOrders.map((orderId) => {
+                      const order = orders.find((o) => o.id === orderId);
+                      if (!order) return null;
+                      const patient = patientMap.get(order.patientId);
+                      return (
+                        <div
+                          key={orderId}
+                          className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-4"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                              <span className="text-base font-bold text-slate-800">
+                                {patient?.bedNo} {patient?.name}
+                              </span>
+                              <StatusBadge status={order.type} variant="type" />
+                              <StatusBadge status={order.status} variant="status" />
+                            </div>
+                            <div className="text-sm font-medium text-slate-700">{order.content}</div>
+                            <div className="mt-1 flex items-center gap-4 text-xs text-slate-500">
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3.5 w-3.5" />
+                                计划时间：{formatTime(order.plannedTime)}
+                              </span>
+                              <span>开单医生：{order.doctorName}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {selectedHandoverRecord.remarks && (
+                <div className="mb-6">
+                  <div className="mb-3 flex items-center gap-2 text-base font-bold text-slate-800">
+                    <StickyNote className="h-5 w-5 text-amber-500" />
+                    交接备注
+                  </div>
+                  <div className="rounded-xl bg-amber-50 p-4 text-slate-700 whitespace-pre-wrap border border-amber-200">
+                    {selectedHandoverRecord.remarks}
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-6">
+                <div className="mb-3 flex items-center gap-2 text-base font-bold text-slate-800">
+                  <ShieldAlert className="h-5 w-5 text-orange-500" />
+                  异常统计
+                </div>
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-5">
+                  <div className="flex items-center gap-4">
+                    <div className="rounded-full bg-orange-100 p-3">
+                      <ShieldAlert className="h-8 w-8 text-orange-600" />
+                    </div>
+                    <div>
+                      <div className="text-sm text-orange-700">待审核异常数量</div>
+                      <div className="text-4xl font-black text-orange-600">
+                        {getExceptionCountForHandover(selectedHandoverRecord)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-3 flex items-center gap-2 text-base font-bold text-slate-800">
+                  <PenLine className="h-5 w-5 text-primary-500" />
+                  双方签名
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <div className="rounded-full bg-primary-100 p-1.5">
+                        <User className="h-4 w-4 text-primary-600" />
+                      </div>
+                      <div className="text-sm font-semibold text-slate-700">
+                        交班护士签名
+                      </div>
+                    </div>
+                    <div className="flex h-24 items-center justify-center rounded-lg bg-white border border-slate-200">
+                      {selectedHandoverRecord.outgoingSignature ? (
+                        <span className="text-2xl font-bold text-slate-700">
+                          {selectedHandoverRecord.outgoingSignature}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">未签名</span>
+                      )}
+                    </div>
+                    <div className="mt-2 text-center text-sm font-medium text-slate-600">
+                      {selectedHandoverRecord.outgoingNurseName}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <div className="rounded-full bg-green-100 p-1.5">
+                        <User className="h-4 w-4 text-green-600" />
+                      </div>
+                      <div className="text-sm font-semibold text-slate-700">
+                        接班护士签名
+                      </div>
+                    </div>
+                    <div className="flex h-24 items-center justify-center rounded-lg bg-white border border-slate-200">
+                      {selectedHandoverRecord.incomingSignature ? (
+                        <span className="text-2xl font-bold text-slate-700">
+                          {selectedHandoverRecord.incomingSignature}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">未签名</span>
+                      )}
+                    </div>
+                    <div className="mt-2 text-center text-sm font-medium text-slate-600">
+                      {selectedHandoverRecord.incomingNurseName}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -865,7 +1067,8 @@ export default function HandoverConfirm() {
                   {[...handoverRecords].reverse().slice(0, 10).map((record) => (
                     <tr
                       key={record.id}
-                      className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors"
+                      onClick={() => setSelectedHandoverRecord(record)}
+                      className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors cursor-pointer"
                     >
                       <td className="py-3 px-4">
                         <span

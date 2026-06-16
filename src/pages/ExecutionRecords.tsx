@@ -17,11 +17,23 @@ import {
   HeartPulse,
   FileText,
   Shield,
+  Stethoscope as StethoscopeIcon,
+  QrCode,
+  AlertTriangle,
+  ArrowRightLeft,
+  ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import StatusBadge from '../components/StatusBadge';
 import Empty from '../components/Empty';
-import type { ExecutionRecord, OrderStatus, OrderType } from '../types';
+import type {
+  ExecutionRecord,
+  OrderStatus,
+  OrderType,
+  ExceptionRecord,
+  HandoverRecord,
+} from '../types';
 import { formatDate, formatTime } from '../utils/time';
 import { cn } from '../lib/utils';
 
@@ -47,8 +59,177 @@ type TimeRange = 'today' | '3days' | '7days' | 'custom';
 type StatusFilter = '全部' | OrderStatus;
 type TypeFilter = '全部' | OrderType;
 
+type TimelineNodeType =
+  | 'order_created'
+  | 'verify_patient'
+  | 'verify_drug'
+  | 'execute'
+  | 'exception_report'
+  | 'exception_review'
+  | 'handover';
+
+interface TimelineNode {
+  id: string;
+  type: TimelineNodeType;
+  time: string;
+  operator: string;
+  title: string;
+  detail?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: string;
+}
+
+function getIconColor(type: TimelineNodeType): string {
+  switch (type) {
+    case 'order_created':
+      return 'bg-indigo-500';
+    case 'verify_patient':
+      return 'bg-blue-500';
+    case 'verify_drug':
+      return 'bg-teal-500';
+    case 'execute':
+      return 'bg-green-500';
+    case 'exception_report':
+      return 'bg-red-500';
+    case 'exception_review':
+      return 'bg-amber-500';
+    case 'handover':
+      return 'bg-purple-500';
+  }
+}
+
+function getIcon(type: TimelineNodeType): React.ComponentType<{ className?: string }> {
+  switch (type) {
+    case 'order_created':
+      return StethoscopeIcon;
+    case 'verify_patient':
+      return UserCheck;
+    case 'verify_drug':
+      return ShieldCheck;
+    case 'execute':
+      return CheckCircle2;
+    case 'exception_report':
+      return AlertTriangle;
+    case 'exception_review':
+      return Shield;
+    case 'handover':
+      return ArrowRightLeft;
+  }
+}
+
+function buildTimeline(
+  record: ExecutionRecord,
+  order: ReturnType<typeof useAppStore.getState>['orders'][number] | undefined,
+  exceptions: ExceptionRecord[],
+  handovers: HandoverRecord[],
+): TimelineNode[] {
+  const nodes: TimelineNode[] = [];
+
+  if (order) {
+    nodes.push({
+      id: `create-${order.id}`,
+      type: 'order_created',
+      time: order.createTime,
+      operator: order.doctorName,
+      title: '开立医嘱',
+      detail: `医嘱号：${order.orderNo}`,
+      icon: getIcon('order_created'),
+      color: getIconColor('order_created'),
+    });
+  }
+
+  const verifyPatientLog = record.operationLog.find((l) =>
+    l.action.includes('腕带') || l.action.includes('患者'),
+  );
+  if (verifyPatientLog || record.verifyPatient) {
+    nodes.push({
+      id: `verify-patient-${record.id}`,
+      type: 'verify_patient',
+      time: verifyPatientLog?.time || record.executeTime,
+      operator: verifyPatientLog?.operator || record.executorName,
+      title: `患者腕带核对${record.verifyPatient ? '通过' : '未通过'}`,
+      detail: verifyPatientLog?.detail,
+      icon: getIcon('verify_patient'),
+      color: getIconColor('verify_patient'),
+    });
+  }
+
+  const verifyDrugLog = record.operationLog.find((l) =>
+    l.action.includes('药品') || l.action.includes('条码'),
+  );
+  if (verifyDrugLog || record.verifyDrug) {
+    nodes.push({
+      id: `verify-drug-${record.id}`,
+      type: 'verify_drug',
+      time: verifyDrugLog?.time || record.executeTime,
+      operator: verifyDrugLog?.operator || record.executorName,
+      title: `药品条码核对${record.verifyDrug ? '通过' : '未通过'}`,
+      detail: verifyDrugLog?.detail,
+      icon: getIcon('verify_drug'),
+      color: getIconColor('verify_drug'),
+    });
+  }
+
+  const executeLog = record.operationLog.find(
+    (l) => l.action.includes('执行') || l.action.includes('确认') || l.action.includes('完成'),
+  );
+  nodes.push({
+    id: `execute-${record.id}`,
+    type: 'execute',
+    time: executeLog?.time || record.executeTime,
+    operator: record.executorName,
+    title: `医嘱执行（${record.status}）`,
+    detail: executeLog?.detail || record.remark,
+    icon: getIcon('execute'),
+    color: getIconColor('execute'),
+  });
+
+  exceptions.forEach((ex) => {
+    nodes.push({
+      id: `exception-${ex.id}`,
+      type: 'exception_report',
+      time: ex.reportTime,
+      operator: ex.reporterName,
+      title: `异常登记：${ex.type}`,
+      detail: `${ex.reason}${ex.customReason ? '（' + ex.customReason + '）' : ''} - ${ex.description}`,
+      icon: getIcon('exception_report'),
+      color: getIconColor('exception_report'),
+    });
+
+    if (ex.reviewTime && ex.reviewerName) {
+      nodes.push({
+        id: `review-${ex.id}`,
+        type: 'exception_review',
+        time: ex.reviewTime,
+        operator: ex.reviewerName,
+        title: `异常审核：${ex.status}`,
+        detail: ex.reviewOpinion,
+        icon: getIcon('exception_review'),
+        color: getIconColor('exception_review'),
+      });
+    }
+  });
+
+  handovers.forEach((ho) => {
+    nodes.push({
+      id: `handover-${ho.id}`,
+      type: 'handover',
+      time: ho.handoverTime,
+      operator: `${ho.outgoingNurseName} → ${ho.incomingNurseName}`,
+      title: `交接班（${ho.shift}）`,
+      detail: ho.remarks || `交接 ${ho.pendingOrders.length} 条待执行医嘱`,
+      icon: getIcon('handover'),
+      color: getIconColor('handover'),
+    });
+  });
+
+  nodes.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+  return nodes;
+}
+
 export default function ExecutionRecords() {
-  const { executionRecords, patients, orders } = useAppStore();
+  const { executionRecords, patients, orders, exceptionRecords, handoverRecords } = useAppStore();
 
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
   const [customStart, setCustomStart] = useState('');
@@ -57,7 +238,7 @@ export default function ExecutionRecords() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('全部');
   const [executorFilter, setExecutorFilter] = useState('');
   const [bedNoSearch, setBedNoSearch] = useState('');
-  const [expandedRecord, setExpandedRecord] = useState<ExecutionRecord | null>(null);
+  const [detailRecord, setDetailRecord] = useState<ExecutionRecord | null>(null);
   const [showSignatureModal, setShowSignatureModal] = useState<string | null>(null);
 
   const patientMap = useMemo(() => {
@@ -122,13 +303,28 @@ export default function ExecutionRecords() {
         const patient = patientMap.get(r.patientId);
         return patient?.bedNo.includes(bedNoSearch);
       })
-      .sort((a, b) => new Date(b.executeTime).getTime() - new Date(a.executeTime).getTime());
-  }, [executionRecords, timeRange, customStart, customEnd, statusFilter, typeFilter, executorFilter, bedNoSearch, patientMap, orderMap]);
+      .sort(
+        (a, b) => new Date(b.executeTime).getTime() - new Date(a.executeTime).getTime(),
+      );
+  }, [
+    executionRecords,
+    timeRange,
+    customStart,
+    customEnd,
+    statusFilter,
+    typeFilter,
+    executorFilter,
+    bedNoSearch,
+    patientMap,
+    orderMap,
+  ]);
 
   const stats = useMemo(() => {
     const total = filteredRecords.length;
     const executed = filteredRecords.filter((r) => r.status === '已执行').length;
-    const exceptions = filteredRecords.filter((r) => r.status === '异常' || r.status === '漏执行').length;
+    const exceptions = filteredRecords.filter(
+      (r) => r.status === '异常' || r.status === '漏执行',
+    ).length;
 
     let totalDuration = 0;
     let durationCount = 0;
@@ -146,6 +342,14 @@ export default function ExecutionRecords() {
     return { total, onTimeRate, exceptions, avgDuration };
   }, [filteredRecords]);
 
+  const detailTimeline = useMemo(() => {
+    if (!detailRecord) return [];
+    const order = orderMap.get(detailRecord.orderId);
+    const exs = exceptionRecords.filter((e) => e.orderId === detailRecord.orderId);
+    const hos = handoverRecords.filter((h) => h.pendingOrders.includes(detailRecord.orderId));
+    return buildTimeline(detailRecord, order, exs, hos);
+  }, [detailRecord, orderMap, exceptionRecords, handoverRecords]);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -162,7 +366,9 @@ export default function ExecutionRecords() {
                   onClick={() => setTimeRange(range)}
                   className={cn(
                     'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                    timeRange === range ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900',
+                    timeRange === range
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900',
                   )}
                 >
                   {range === 'today' ? '今日' : range === '3days' ? '近3日' : '近7日'}
@@ -172,7 +378,9 @@ export default function ExecutionRecords() {
                 onClick={() => setTimeRange('custom')}
                 className={cn(
                   'flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                  timeRange === 'custom' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900',
+                  timeRange === 'custom'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900',
                 )}
               >
                 <Calendar className="h-3.5 w-3.5" />
@@ -325,9 +533,15 @@ export default function ExecutionRecords() {
               return (
                 <div
                   key={record.id}
-                  className="relative flex gap-4 p-4 hover:bg-slate-50"
+                  onClick={() => setDetailRecord(record)}
+                  className="relative flex cursor-pointer gap-4 p-4 transition-colors hover:bg-slate-50"
                 >
-                  <div className={cn('absolute left-0 top-0 h-full w-1 rounded-r', statusColorMap[record.status])} />
+                  <div
+                    className={cn(
+                      'absolute left-0 top-0 h-full w-1 rounded-r',
+                      statusColorMap[record.status],
+                    )}
+                  />
 
                   <div className="flex-1 pl-2">
                     <div className="flex items-start justify-between gap-4">
@@ -367,7 +581,11 @@ export default function ExecutionRecords() {
                             <Shield className="h-4 w-4 text-slate-400" />
                             <span className="text-sm text-slate-600">
                               患者核对：
-                              <span className={record.verifyPatient ? 'text-green-600' : 'text-red-600'}>
+                              <span
+                                className={cn(
+                                  record.verifyPatient ? 'text-green-600' : 'text-red-600',
+                                )}
+                              >
                                 {record.verifyPatient ? '通过' : '未通过'}
                               </span>
                             </span>
@@ -378,7 +596,9 @@ export default function ExecutionRecords() {
                               <Pill className="h-4 w-4 text-slate-400" />
                               <span className="text-sm text-slate-600">
                                 药品核对：
-                                <span className={record.verifyDrug ? 'text-green-600' : 'text-red-600'}>
+                                <span
+                                  className={cn(record.verifyDrug ? 'text-green-600' : 'text-red-600')}
+                                >
                                   {record.verifyDrug ? '通过' : '未通过'}
                                 </span>
                               </span>
@@ -387,12 +607,9 @@ export default function ExecutionRecords() {
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => setExpandedRecord(record)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                      >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
                         <ChevronRight className="h-5 w-5" />
-                      </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -402,13 +619,13 @@ export default function ExecutionRecords() {
         )}
       </div>
 
-      {expandedRecord && (
+      {detailRecord && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 p-4">
-              <h2 className="text-lg font-semibold text-slate-900">执行记录详情</h2>
+              <h2 className="text-lg font-semibold text-slate-900">执行记录闭环详情</h2>
               <button
-                onClick={() => setExpandedRecord(null)}
+                onClick={() => setDetailRecord(null)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
                 <X className="h-5 w-5" />
@@ -421,7 +638,7 @@ export default function ExecutionRecords() {
                   <h3 className="mb-3 text-sm font-medium text-slate-500">医嘱信息</h3>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     {(() => {
-                      const order = orderMap.get(expandedRecord.orderId);
+                      const order = orderMap.get(detailRecord.orderId);
                       if (!order) return <p className="text-sm text-slate-500">暂无医嘱信息</p>;
                       return (
                         <div className="space-y-2 text-sm">
@@ -473,7 +690,7 @@ export default function ExecutionRecords() {
                   <h3 className="mb-3 text-sm font-medium text-slate-500">患者信息</h3>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     {(() => {
-                      const patient = patientMap.get(expandedRecord.patientId);
+                      const patient = patientMap.get(detailRecord.patientId);
                       if (!patient) return <p className="text-sm text-slate-500">暂无患者信息</p>;
                       return (
                         <div className="grid grid-cols-2 gap-2 text-sm">
@@ -514,24 +731,56 @@ export default function ExecutionRecords() {
                 </div>
 
                 <div>
-                  <h3 className="mb-3 text-sm font-medium text-slate-500">操作时间线</h3>
-                  <div className="relative space-y-4 pl-6">
-                    <div className="absolute left-2 top-2 bottom-2 w-px bg-slate-200" />
-                    {expandedRecord.operationLog.map((log, index) => (
-                      <div key={index} className="relative">
-                        <div className="absolute -left-[18px] top-1.5 flex h-3 w-3 items-center justify-center rounded-full border-2 border-white bg-blue-500" />
-                        <div className="rounded-lg border border-slate-200 bg-white p-3">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-slate-900">{log.action}</span>
-                            <span className="text-xs text-slate-500">
-                              {formatDate(log.time)} {formatTime(log.time)}
-                            </span>
+                  <h3 className="mb-3 text-sm font-medium text-slate-500">
+                    闭环时间线
+                    <span className="ml-2 text-xs text-slate-400">
+                      共 {detailTimeline.length} 个节点
+                    </span>
+                  </h3>
+                  <div className="relative space-y-0 pl-8">
+                    <div className="absolute left-[15px] top-3 bottom-3 w-px bg-slate-200" />
+                    {detailTimeline.map((node, index) => {
+                      const Icon = node.icon;
+                      const isLast = index === detailTimeline.length - 1;
+                      return (
+                        <div key={node.id} className="relative pb-4 last:pb-0">
+                          <div
+                            className={cn(
+                              'absolute -left-[13px] top-0.5 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white shadow-md',
+                              node.color,
+                            )}
+                          >
+                            <Icon className="h-3.5 w-3.5 text-white" />
                           </div>
-                          <p className="mt-1 text-xs text-slate-500">操作人：{log.operator}</p>
-                          {log.detail && <p className="mt-1 text-sm text-slate-600">{log.detail}</p>}
+                          <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:shadow-md transition-shadow">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-slate-900">{node.title}</span>
+                                {isLast && (
+                                  <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                                    最新
+                                  </span>
+                                )}
+                              </div>
+                              <span className="shrink-0 text-xs text-slate-500">
+                                {formatDate(node.time)} {formatTime(node.time)}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+                              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200">
+                                <User className="h-3 w-3 text-slate-600" />
+                              </div>
+                              <span className="text-slate-600">{node.operator}</span>
+                            </div>
+                            {node.detail && (
+                              <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-600 leading-relaxed">
+                                {node.detail}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -539,12 +788,14 @@ export default function ExecutionRecords() {
                   <h3 className="mb-3 text-sm font-medium text-slate-500">执行人签名</h3>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <button
-                      onClick={() => setShowSignatureModal(expandedRecord.signature)}
+                      onClick={() => setShowSignatureModal(detailRecord.signature)}
                       className="block w-full"
                     >
-                      <div className="flex items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-white py-6 hover:border-blue-400">
+                      <div className="flex items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-white py-6 hover:border-blue-400 transition-colors">
                         <div className="text-center">
-                          <div className="text-lg font-medium text-slate-700">{expandedRecord.executorName}</div>
+                          <div className="text-lg font-medium text-slate-700">
+                            {detailRecord.executorName}
+                          </div>
                           <p className="mt-1 text-xs text-slate-400">点击查看签名大图</p>
                         </div>
                       </div>
@@ -552,11 +803,11 @@ export default function ExecutionRecords() {
                   </div>
                 </div>
 
-                {expandedRecord.remark && (
+                {detailRecord.remark && (
                   <div>
                     <h3 className="mb-3 text-sm font-medium text-slate-500">执行备注</h3>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-sm text-slate-700">{expandedRecord.remark}</p>
+                      <p className="text-sm text-slate-700">{detailRecord.remark}</p>
                     </div>
                   </div>
                 )}

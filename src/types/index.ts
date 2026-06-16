@@ -45,6 +45,9 @@ export interface ExecutionRecord {
   operationLog: OperationLog[];
 }
 
+// 异常来源
+export type ExceptionSource = '手动登记' | '腕带不匹配' | '药品核对失败' | '腕带无效' | '扫码流程中断';
+
 // 异常记录
 export interface ExceptionRecord {
   id: string;
@@ -62,6 +65,12 @@ export interface ExceptionRecord {
   reviewerName?: string;
   reviewTime?: string;
   reviewOpinion?: string;
+  source?: ExceptionSource;
+  expectedPatient?: { bedNo: string; name: string };
+  actualPatient?: { bedNo: string; name: string };
+  scannedCode?: string;
+  expectedDrugCode?: string;
+  actualDrugCode?: string;
 }
 
 // 交接记录

@@ -39,22 +39,52 @@ export default function ExceptionHandling() {
   const [searchParams, setSearchParams] = useSearchParams();
   const paramOrderId = searchParams.get('orderId');
   const paramPatientId = searchParams.get('patientId');
+  const paramSource = searchParams.get('source') as ExceptionRecord['source'] | null;
+  const paramExpectedBedNo = searchParams.get('expectedBedNo');
+  const paramExpectedName = searchParams.get('expectedName');
+  const paramActualBedNo = searchParams.get('actualBedNo');
+  const paramActualName = searchParams.get('actualName');
+  const paramScannedCode = searchParams.get('scannedCode');
+  const paramExpectedDrugCode = searchParams.get('expectedDrugCode');
+  const paramActualDrugCode = searchParams.get('actualDrugCode');
 
   const { exceptionRecords, patients, orders, currentUser, reportException, reviewException } =
     useAppStore();
 
   const [activeTab, setActiveTab] = useState<TabType>('待处理');
 
+  const [scanContext, setScanContext] = useState<{
+    source?: ExceptionRecord['source'];
+    expectedPatient?: { bedNo: string; name: string };
+    actualPatient?: { bedNo: string; name: string };
+    scannedCode?: string;
+    expectedDrugCode?: string;
+    actualDrugCode?: string;
+  } | null>(null);
+
   useEffect(() => {
     if (paramOrderId) {
       setSelectedOrderId(paramOrderId);
       setShowNewModal(true);
+      if (paramSource || paramExpectedBedNo || paramActualBedNo || paramScannedCode || paramExpectedDrugCode) {
+        const ctx: NonNullable<typeof scanContext> = {};
+        if (paramSource) ctx.source = paramSource;
+        if (paramExpectedBedNo && paramExpectedName) {
+          ctx.expectedPatient = { bedNo: paramExpectedBedNo, name: paramExpectedName };
+        }
+        if (paramActualBedNo && paramActualName) {
+          ctx.actualPatient = { bedNo: paramActualBedNo, name: paramActualName };
+        }
+        if (paramScannedCode) ctx.scannedCode = paramScannedCode;
+        if (paramExpectedDrugCode) ctx.expectedDrugCode = paramExpectedDrugCode;
+        if (paramActualDrugCode) ctx.actualDrugCode = paramActualDrugCode;
+        setScanContext(ctx);
+      }
     }
   }, [paramOrderId]);
 
   const clearUrlParams = () => {
-    searchParams.delete('orderId');
-    searchParams.delete('patientId');
+    ['orderId','patientId','source','expectedBedNo','expectedName','actualBedNo','actualName','scannedCode','expectedDrugCode','actualDrugCode'].forEach(k => searchParams.delete(k));
     setSearchParams(searchParams, { replace: true });
   };
   const [showDetailModal, setShowDetailModal] = useState<ExceptionRecord | null>(null);
@@ -122,6 +152,7 @@ export default function ExceptionHandling() {
     setSupplementTime('');
     setSelectedOrderId('');
     setShowSignature(false);
+    setScanContext(null);
   };
 
   const closeAllModals = () => {
@@ -151,6 +182,12 @@ export default function ExceptionHandling() {
       description,
       reporterId: currentUser.id,
       reporterName: currentUser.name,
+      source: scanContext?.source || '手动登记',
+      expectedPatient: scanContext?.expectedPatient,
+      actualPatient: scanContext?.actualPatient,
+      scannedCode: scanContext?.scannedCode,
+      expectedDrugCode: scanContext?.expectedDrugCode,
+      actualDrugCode: scanContext?.actualDrugCode,
     });
 
     setShowSignature(false);
@@ -273,6 +310,11 @@ export default function ExceptionHandling() {
                             <AlertTriangle className="mr-1 h-3 w-3" />
                             {record.type}
                           </span>
+                          {record.source && record.source !== '手动登记' && (
+                            <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+                              {record.source}
+                            </span>
+                          )}
                           <span className="text-sm text-slate-500">
                             {formatDate(record.reportTime)} {formatTime(record.reportTime)}
                           </span>
@@ -387,7 +429,7 @@ export default function ExceptionHandling() {
 
             <div className="flex-1 overflow-y-auto p-4">
               <div className="space-y-6">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span
                     className={cn(
                       'inline-flex items-center rounded-full px-3 py-1 text-sm font-medium',
@@ -409,6 +451,11 @@ export default function ExceptionHandling() {
                   >
                     {showDetailModal.status}
                   </span>
+                  {showDetailModal.source && showDetailModal.source !== '手动登记' && (
+                    <span className="inline-flex items-center rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-700">
+                      来源：{showDetailModal.source}
+                    </span>
+                  )}
                 </div>
 
                 <div>
@@ -508,6 +555,52 @@ export default function ExceptionHandling() {
                   </div>
                 </div>
 
+                {(showDetailModal.source || showDetailModal.expectedPatient || showDetailModal.actualPatient || showDetailModal.scannedCode || showDetailModal.expectedDrugCode || showDetailModal.actualDrugCode) && (
+                  <div>
+                    <h3 className="mb-3 text-sm font-medium text-slate-500">扫码追溯信息</h3>
+                    <div className="rounded-lg border border-violet-200 bg-violet-50 p-4 space-y-2 text-sm">
+                      {showDetailModal.source && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">异常来源</span>
+                          <span className="inline-flex items-center rounded-full bg-violet-200 px-2.5 py-0.5 text-xs font-medium text-violet-800">
+                            {showDetailModal.source}
+                          </span>
+                        </div>
+                      )}
+                      {showDetailModal.expectedPatient && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">应核对患者</span>
+                          <span className="font-medium text-slate-900">{showDetailModal.expectedPatient.bedNo} {showDetailModal.expectedPatient.name}</span>
+                        </div>
+                      )}
+                      {showDetailModal.actualPatient && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">实际扫描患者</span>
+                          <span className="font-medium text-red-700">{showDetailModal.actualPatient.bedNo} {showDetailModal.actualPatient.name}</span>
+                        </div>
+                      )}
+                      {showDetailModal.scannedCode && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">扫描条码</span>
+                          <span className="font-mono text-slate-900">{showDetailModal.scannedCode}</span>
+                        </div>
+                      )}
+                      {showDetailModal.expectedDrugCode && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">应核对药品条码</span>
+                          <span className="font-mono text-slate-900">{showDetailModal.expectedDrugCode}</span>
+                        </div>
+                      )}
+                      {showDetailModal.actualDrugCode && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">实际扫描药品条码</span>
+                          <span className="font-mono text-red-700">{showDetailModal.actualDrugCode}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {showDetailModal.status !== '待审核' && (
                   <div>
                     <h3 className="mb-3 text-sm font-medium text-slate-500">审核信息</h3>
@@ -592,6 +685,32 @@ export default function ExceptionHandling() {
                   </>
                 ) : (
                   <>
+                    {showNewModal && scanContext && (
+                      <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+                        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-800">
+                          <AlertTriangle className="h-4 w-4" />
+                          异常来源：{scanContext.source || '扫码流程'}
+                        </div>
+                        <div className="space-y-1 text-xs text-amber-700">
+                          {scanContext.expectedPatient && (
+                            <div>应核对患者：{scanContext.expectedPatient.bedNo} {scanContext.expectedPatient.name}</div>
+                          )}
+                          {scanContext.actualPatient && (
+                            <div>实际扫描患者：{scanContext.actualPatient.bedNo} {scanContext.actualPatient.name}</div>
+                          )}
+                          {scanContext.scannedCode && (
+                            <div>扫描条码：{scanContext.scannedCode}</div>
+                          )}
+                          {scanContext.expectedDrugCode && (
+                            <div>应核对药品条码：{scanContext.expectedDrugCode}</div>
+                          )}
+                          {scanContext.actualDrugCode && (
+                            <div>实际扫描药品条码：{scanContext.actualDrugCode}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {showNewModal && (
                       <div>
                         <label className="mb-1.5 block text-sm font-medium text-slate-700">

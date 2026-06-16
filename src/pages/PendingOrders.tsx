@@ -157,10 +157,19 @@ function OrderCard({
   );
 }
 
+interface PatientSummary {
+  patient: Patient;
+  pendingCount: number;
+  earliestTime: string | null;
+  hasConflict: boolean;
+  hasPendingException: boolean;
+}
+
 export default function PendingOrders() {
   const navigate = useNavigate();
   const patients = useAppStore((state) => state.patients);
   const orders = useAppStore((state) => state.orders);
+  const exceptionRecords = useAppStore((state) => state.exceptionRecords);
   const currentUser = useAppStore((state) => state.currentUser);
   const selectedPatientId = useAppStore((state) => state.selectedPatientId);
   const selectPatient = useAppStore((state) => state.selectPatient);
@@ -193,6 +202,38 @@ export default function PendingOrders() {
     patients.forEach((p) => map.set(p.id, p));
     return map;
   }, [patients]);
+
+  const patientSummaries = useMemo<PatientSummary[]>(() => {
+    const pendingOrders = getPendingOrders();
+    return patients
+      .map((patient) => {
+        const patientOrders = pendingOrders.filter((o) => o.patientId === patient.id);
+        const earliestOrder = patientOrders.reduce<Order | null>((earliest, order) => {
+          if (!earliest) return order;
+          return new Date(order.plannedTime) < new Date(earliest.plannedTime) ? order : earliest;
+        }, null);
+        const hasConflict = patientOrders.some((o) => o.isConflict);
+        const hasPendingException = exceptionRecords.some(
+          (r) => r.patientId === patient.id && r.status === '待审核',
+        );
+        return {
+          patient,
+          pendingCount: patientOrders.length,
+          earliestTime: earliestOrder ? earliestOrder.plannedTime : null,
+          hasConflict,
+          hasPendingException,
+        };
+      })
+      .filter((s) => s.pendingCount > 0)
+      .sort((a, b) => {
+        if (a.earliestTime && b.earliestTime) {
+          return new Date(a.earliestTime).getTime() - new Date(b.earliestTime).getTime();
+        }
+        if (a.earliestTime) return -1;
+        if (b.earliestTime) return 1;
+        return 0;
+      });
+  }, [patients, getPendingOrders, exceptionRecords]);
 
   const filteredOrders = useMemo(() => {
     let orders = getPendingOrders();
@@ -622,6 +663,90 @@ export default function PendingOrders() {
           </div>
         </div>
       </div>
+
+      {patientSummaries.length > 0 && (
+        <div className="border-b border-slate-200 bg-gradient-to-b from-slate-50 to-white px-4 py-4">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base font-bold text-slate-700">按病人汇总</span>
+              <span className="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-semibold text-primary-700">
+                {patientSummaries.length} 位患者有待执行医嘱
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {patientSummaries.map((summary) => {
+              const isSelected = selectedPatientId === summary.patient.id;
+              const isOverdueTime = summary.earliestTime ? isOverdue(summary.earliestTime) : false;
+              const isUpcomingTime = summary.earliestTime ? isUpcoming(summary.earliestTime) : false;
+              const badgeColor = isOverdueTime
+                ? 'bg-red-500 text-white'
+                : isUpcomingTime
+                ? 'bg-amber-500 text-white'
+                : 'bg-primary-500 text-white';
+
+              return (
+                <button
+                  key={summary.patient.id}
+                  onClick={() => selectPatient(isSelected ? null : summary.patient.id)}
+                  className={cn(
+                    'relative rounded-xl border-2 p-4 text-left transition-all duration-200 hover:shadow-md',
+                    isSelected
+                      ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500 ring-offset-1'
+                      : 'border-slate-200 bg-white hover:border-slate-300',
+                  )}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <span className="text-2xl font-bold text-slate-800">
+                        {summary.patient.bedNo.replace('床', '')}
+                      </span>
+                      <span className="ml-1 text-sm text-slate-500">床</span>
+                      <span className="ml-2 text-lg font-semibold text-slate-800">
+                        {summary.patient.name}
+                      </span>
+                    </div>
+                    <span
+                      className={cn(
+                        'rounded-full px-2.5 py-0.5 text-sm font-bold min-w-[32px] text-center',
+                        badgeColor,
+                      )}
+                    >
+                      {summary.pendingCount}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-sm">
+                    <Clock className={cn('h-4 w-4', isOverdueTime ? 'text-red-500' : 'text-slate-400')} />
+                    <span className={cn(isOverdueTime ? 'text-red-600 font-medium' : 'text-slate-600')}>
+                      {summary.earliestTime
+                        ? isOverdueTime
+                          ? `已超时 ${formatTime(summary.earliestTime)}`
+                          : formatTime(summary.earliestTime)
+                        : '-'}
+                    </span>
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    {summary.hasConflict && (
+                      <div className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5">
+                        <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+                        <span className="text-xs font-medium text-red-700">冲突</span>
+                      </div>
+                    )}
+                    {summary.hasPendingException && (
+                      <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5">
+                        <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                        <span className="text-xs font-medium text-amber-700">待审核</span>
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="border-b border-slate-200 bg-white px-4 py-3">
         <div className="mb-3 flex flex-wrap items-center gap-2">

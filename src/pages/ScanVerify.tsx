@@ -180,6 +180,14 @@ export default function ScanVerify() {
   const [wristbandError, setWristbandError] = useState('');
   const [scanError, setScanError] = useState('');
   const [orderSearchText, setOrderSearchText] = useState('');
+  const [exceptionContext, setExceptionContext] = useState<{
+    source: '腕带不匹配' | '药品核对失败' | '腕带无效' | '扫码流程中断';
+    expectedPatient?: { bedNo: string; name: string };
+    actualPatient?: { bedNo: string; name: string };
+    scannedCode?: string;
+    expectedDrugCode?: string;
+    actualDrugCode?: string;
+  } | null>(null);
 
   const pendingOrders = useMemo(() => {
     let result = getPendingOrders();
@@ -232,11 +240,16 @@ export default function ScanVerify() {
   const handleScanWristband = () => {
     if (!wristbandInput.trim()) return;
     setWristbandError('');
+    setExceptionContext(null);
     const result = verifyWristband(wristbandInput.trim());
 
     if (!result) {
       setWristbandVerified(false);
       setWristbandError('腕带条码无效，请检查腕带');
+      setExceptionContext({
+        source: '腕带无效',
+        scannedCode: wristbandInput.trim(),
+      });
       return;
     }
 
@@ -246,6 +259,12 @@ export default function ScanVerify() {
       setWristbandError(
         `患者不匹配！当前医嘱属于【${orderPatient?.bedNo || ''} ${orderPatient?.name || ''}】，您扫描的是【${result.bedNo} ${result.name}】，请核对后重新扫描`
       );
+      setExceptionContext({
+        source: '腕带不匹配',
+        expectedPatient: orderPatient ? { bedNo: orderPatient.bedNo, name: orderPatient.name } : undefined,
+        actualPatient: { bedNo: result.bedNo, name: result.name },
+        scannedCode: wristbandInput.trim(),
+      });
       return;
     }
 
@@ -277,8 +296,17 @@ export default function ScanVerify() {
 
   const handleScanDrug = () => {
     if (!drugInput.trim() || !currentOrder) return;
+    setExceptionContext(null);
     const result = verifyDrugBarcode(currentOrder.id, drugInput.trim());
     setDrugVerified(result);
+    if (!result) {
+      setExceptionContext({
+        source: '药品核对失败',
+        expectedDrugCode: currentOrder.barcode,
+        actualDrugCode: drugInput.trim(),
+        expectedPatient: patient ? { bedNo: patient.bedNo, name: patient.name } : undefined,
+      });
+    }
     setTimeout(() => setCurrentStep(4), 500);
   };
 
@@ -286,6 +314,7 @@ export default function ScanVerify() {
     if (currentOrder?.barcode) {
       setDrugInput(currentOrder.barcode);
       setDrugVerified(true);
+      setExceptionContext(null);
       setTimeout(() => setCurrentStep(4), 500);
     }
   };
@@ -321,7 +350,24 @@ export default function ScanVerify() {
 
   const handleException = () => {
     if (!currentOrder) return;
-    navigate(`/exceptions?orderId=${currentOrder.id}&patientId=${currentOrder.patientId}`);
+    const params = new URLSearchParams();
+    params.set('orderId', currentOrder.id);
+    params.set('patientId', currentOrder.patientId);
+    if (exceptionContext) {
+      params.set('source', exceptionContext.source);
+      if (exceptionContext.expectedPatient) {
+        params.set('expectedBedNo', exceptionContext.expectedPatient.bedNo);
+        params.set('expectedName', exceptionContext.expectedPatient.name);
+      }
+      if (exceptionContext.actualPatient) {
+        params.set('actualBedNo', exceptionContext.actualPatient.bedNo);
+        params.set('actualName', exceptionContext.actualPatient.name);
+      }
+      if (exceptionContext.scannedCode) params.set('scannedCode', exceptionContext.scannedCode);
+      if (exceptionContext.expectedDrugCode) params.set('expectedDrugCode', exceptionContext.expectedDrugCode);
+      if (exceptionContext.actualDrugCode) params.set('actualDrugCode', exceptionContext.actualDrugCode);
+    }
+    navigate(`/exceptions?${params.toString()}`);
   };
 
   const allVerified = wristbandVerified && drugVerified;
@@ -529,10 +575,45 @@ export default function ScanVerify() {
                 <div className="mt-4 rounded-xl border-2 border-red-400 bg-red-50 p-4 animate-slide-in">
                   <div className="flex items-start gap-3">
                     <XCircle className="h-6 w-6 text-red-600 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="text-base font-bold text-red-700">患者不匹配</div>
+                    <div className="flex-1">
+                      <div className="text-base font-bold text-red-700">
+                        {exceptionContext?.source === '腕带无效' ? '腕带无效' : '患者不匹配'}
+                      </div>
                       <div className="text-sm text-red-600 mt-1">{wristbandError}</div>
+                      {exceptionContext && (
+                        <div className="mt-3 space-y-1 text-xs text-red-700/80">
+                          {exceptionContext.expectedPatient && (
+                            <div>应核对患者：{exceptionContext.expectedPatient.bedNo} {exceptionContext.expectedPatient.name}</div>
+                          )}
+                          {exceptionContext.actualPatient && (
+                            <div>实际扫描患者：{exceptionContext.actualPatient.bedNo} {exceptionContext.actualPatient.name}</div>
+                          )}
+                          {exceptionContext.scannedCode && (
+                            <div>扫描条码：{exceptionContext.scannedCode}</div>
+                          )}
+                        </div>
+                      )}
                     </div>
+                  </div>
+                  <div className="mt-4 flex gap-3">
+                    <button
+                      onClick={() => {
+                        setWristbandError('');
+                        setExceptionContext(null);
+                        setWristbandInput('');
+                      }}
+                      className="flex items-center justify-center gap-2 rounded-xl border-2 border-red-300 bg-white px-5 py-3 text-base font-semibold text-red-700 transition-all hover:bg-red-50"
+                    >
+                      <RefreshCw className="h-5 w-5" />
+                      重新扫码
+                    </button>
+                    <button
+                      onClick={handleException}
+                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-500 px-5 py-3 text-base font-semibold text-white shadow-sm transition-all hover:bg-red-600"
+                    >
+                      <AlertTriangle className="h-5 w-5" />
+                      登记异常
+                    </button>
                   </div>
                 </div>
               )}
